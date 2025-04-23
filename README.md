@@ -70,7 +70,7 @@ Temporarily suspend argument checks within a `with` block.
 ## Examples
 ```python
 # Example 1: Basic type‐and‐default validation
-from argcheck import validate_args
+from typekeeper import validate_args
 
 @validate_args()
 def greet(name: str, times: int = 1):
@@ -84,7 +84,7 @@ greet(42)
 ```
 ```python
 # Example 2: Numeric‐range and length‐range constraints
-from argcheck import validate_args
+from typekeeper import validate_args
 
 @validate_args(lengths="x=1-3; data=2-4")
 def process(x: int, data: list[int]):
@@ -101,7 +101,7 @@ process(2, [1])
 ```
 ```python
 # Example 3: Mutable‐default detection
-from argcheck import validate_args
+from typekeeper import validate_args
 
 @validate_args(ignore_defaults=False)
 def append_item(items: list[int] = []):
@@ -113,7 +113,7 @@ def append_item(items: list[int] = []):
 ```
 ```python
 # Example 4: Custom _validate() on nested items
-from argcheck import validate_args
+from typekeeper import validate_args
 
 class Thing:
     def __init__(self, v: int):
