@@ -8,7 +8,7 @@ typekeeper is a lightweight Python library that injects comprehensive runtime va
 - Enforces numeric ranges and sequence-length constraints via an easy spec string.  
 - Captures both the function definition and call site in all warnings for precise diagnostics.
 
-Simply decorate your function with `@print_param_info(...)` to gain these safeguards during development, without changing your function signature.
+Simply decorate your function with `@validate_args(...)` to gain these safeguards during development, without changing your function signature.
 
 ## Features
 - **Type validation**: Recursively checks simple and generic types (`List[int]`, `Dict[str, float]`, `Optional[...]`, `Union[...]`, `Callable`, etc.).  
@@ -32,9 +32,9 @@ Argument checks are controlled by an internal flag; direct access is not require
 
 ## API Reference
 
-### `print_param_info`
+### `validate_args`
 ```python
-def print_param_info(*, lengths: Optional[str] = None, ignore_defaults: bool = False) -> Callable
+def validate_args(*, lengths: Optional[str] = None, ignore_defaults: bool = False) -> Callable
 ```
 - **lengths**: Optional specification string for constraining numeric values or sequence lengths. It uses a semicolon-separated list of parameter specifications in the form:
   ```text
