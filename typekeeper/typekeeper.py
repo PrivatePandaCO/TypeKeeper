@@ -10,7 +10,7 @@ import warnings
 from collections.abc import Iterable
 from contextlib import contextmanager
 from functools import lru_cache, wraps
-from typing import Annotated, Any, Callable, Union, get_args, get_origin
+from typing import Annotated, Any, Callable, Union, get_args, get_origin, Tuple, Dict, Generator
 
 # Global flag to enable/disable all checks
 RUN_CHECKS: bool = True
@@ -27,7 +27,7 @@ def set_arg_checks(enabled: bool) -> None:
 
 
 @contextmanager
-def suspend_arg_checks() -> None:
+def suspend_arg_checks() -> Generator[None, Any, None]:
     """
     Temporarily disable argument checking within a with-block.
 
@@ -186,9 +186,11 @@ def _check_type(value, annotation) -> bool:
 
 def _recursive_validate(obj, path=None) -> list[tuple[list, object]]:
     """
-    Return a list of (path, bad_value) where path is a list of
-    keys/indices showing where in the nested structure the
-    validation failed.
+    Recursively validate an object and its nested elements.
+
+    :param obj: The object to validate
+    :param path: Current traversal path (for internal recursion).
+    :returns: List of `(path, bad_value)` tuples for each validation failure.
     """
     path = [] if path is None else path.copy()
     failures: list[tuple[list, object]] = []
@@ -233,6 +235,21 @@ def validate_args(_func=None, lengths: str = None, *, ignore_defaults: bool = Fa
 
     def decorator(func):
         sig = inspect.signature(func)
+        params = []
+        for name, param in sig.parameters.items():
+            if param.kind is inspect.Parameter.VAR_POSITIONAL:
+                ann = param.annotation
+                # if user wrote *args: T, wrap to Tuple[T, ...]
+                if isinstance(ann, type):
+                    param = param.replace(annotation=Tuple[ann, ...])
+            elif param.kind is inspect.Parameter.VAR_KEYWORD:
+                ann = param.annotation
+                # if user wrote **kwargs: T, wrap to Dict[str, T]
+                if isinstance(ann, type):
+                    param = param.replace(annotation=Dict[str, ann])
+            params.append(param)
+        sig = sig.replace(parameters=params)
+
         # Use cached source lookup
         src_lines, start = _get_source_lines(func)
         def_filename = func.__code__.co_filename

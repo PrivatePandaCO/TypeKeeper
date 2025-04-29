@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="typekeeper",
-    version="0.0.1",
+    version="0.0.2",
     description="An extensive drop-in argument validator.",
     author="Parth Mittal",
     author_email="parth@privatepanda.co",
@@ -14,6 +14,7 @@ setup(
     project_urls={
         "Documentation": "https://github.com/PrivatePandaCO/typekeeper/blob/master/README.md",
         "Github": "https://github.com/PrivatePandaCO/typekeeper",
+        "Changelog": "https://github.com/PrivatePandaCO/typekeeper/blob/master/Changelog.md"
     },
     classifiers=[
         "Programming Language :: Python :: 3",
