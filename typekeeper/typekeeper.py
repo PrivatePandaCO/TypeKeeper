@@ -11,6 +11,8 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from functools import lru_cache, wraps
 from typing import Annotated, Any, Callable, Union, get_args, get_origin, Tuple, Dict, Generator
+from typing import get_type_hints
+
 
 # Global flag to enable/disable all checks
 RUN_CHECKS: bool = True
@@ -27,7 +29,7 @@ def set_arg_checks(enabled: bool) -> None:
 
 
 @contextmanager
-def suspend_arg_checks() -> Generator[None, Any, None]:
+def suspended_arg_checks() -> Generator[None, Any, None]:
     """
     Temporarily disable argument checking within a with-block.
 
@@ -68,22 +70,23 @@ def _get_source_lines(func):
     return inspect.getsourcelines(func)
 
 
-def _parse_specs(lengths: str) -> dict[str, list[tuple[float, float]]]:
+def _parse_specs(lengths: str) -> list[tuple[str, list[tuple[float, float]]]]:
     """
-    Convert a spec string into a mapping of parameter names to numeric ranges.
+    Convert a spec string into an ordered sequence of parameter/range pairs.
 
     :param lengths: Specification string, e.g. "x=1,3-5; y=0-2".
-    :return: Dict mapping each parameter to a list of (min, max) tuples.
+    :return: List of (name, ranges) in the order specified.
     """
-    spec_map: dict[str, list[tuple[float, float]]] = {}
+    specs: list[tuple[str, list[tuple[float, float]]]] = []
     if not lengths:
-        return spec_map
+        return specs
     for token in lengths.split(";"):
         token = token.strip()
         if not token or "=" not in token:
             warnings.warn(f"Invalid spec format '{token}'", UserWarning)
             continue
         name, spec_text = map(str.strip, token.split("=", 1))
+        ranges: list[tuple[float, float]] = []
         for tok in spec_text.split(","):
             tok = tok.strip()
             if not tok:
@@ -97,15 +100,68 @@ def _parse_specs(lengths: str) -> dict[str, list[tuple[float, float]]]:
                         f"Invalid range for '{name}': {lo} > {hi}", UserWarning
                     )
                     continue
-                spec_map.setdefault(name, []).append((lo, hi))
+                ranges.append((lo, hi))
             elif m_single:
                 n = float(m_single.group(1))
-                spec_map.setdefault(name, []).append((n, n))
+                ranges.append((n, n))
             else:
                 warnings.warn(
                     f"Invalid spec token '{tok}' for parameter '{name}'", UserWarning
                 )
-    return spec_map
+        if ranges:
+            specs.append((name, ranges))
+    return specs
+
+
+def _split_path(name: str) -> list[str]:
+    """Split a colon-delimited path honoring escape sequences."""
+    parts: list[str] = []
+    buf = []
+    escape = False
+    for ch in name:
+        if escape:
+            buf.append(ch)
+            escape = False
+        elif ch == "\\":
+            escape = True
+        elif ch == ":":
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf))
+    return parts
+
+
+def _iter_path_values(obj, path: list[str], prefix: list[str] | None = None):
+    """Yield ``(path, value)`` pairs found by traversing *path* starting at *obj*."""
+    if prefix is None:
+        prefix = []
+
+    if not path:
+        yield prefix, obj
+        return
+
+    seg, *rest = path
+
+    # Treat empty or '*' segment as wildcard over containers
+    if seg in ("", "*"):
+        if isinstance(obj, dict):
+            for key, val in obj.items():
+                yield from _iter_path_values(val, rest, prefix + [str(key)])
+        elif isinstance(obj, Iterable) and not isinstance(obj, (str, bytes, bytearray)):
+            for idx, item in enumerate(obj):
+                yield from _iter_path_values(item, rest, prefix + [str(idx)])
+        return
+
+    if isinstance(obj, dict) and seg in obj:
+        yield from _iter_path_values(obj[seg], rest, prefix + [seg])
+        return
+
+
+    if isinstance(obj, Iterable) and not isinstance(obj, (str, bytes, bytearray)):
+        for idx, item in enumerate(obj):
+            yield from _iter_path_values(item, path, prefix + [str(idx)])
 
 
 def is_immutable(obj) -> bool:
@@ -231,10 +287,20 @@ def validate_args(_func=None, lengths: str = None, *, ignore_defaults: bool = Fa
     if not RUN_CHECKS:
         return _func if _func is not None else (lambda f: f)
 
-    spec_map = _parse_specs(lengths)
+    spec_list = _parse_specs(lengths)
 
     def decorator(func):
         sig = inspect.signature(func)
+
+        hints = get_type_hints(func, include_extras=True)
+        params = []
+
+        for name, param in sig.parameters.items():
+            ann = hints.get(name, param.annotation)
+            params.append(param.replace(annotation=ann))
+
+        sig = sig.replace(parameters=params)
+
         params = []
         for name, param in sig.parameters.items():
             if param.kind is inspect.Parameter.VAR_POSITIONAL:
@@ -310,33 +376,43 @@ def validate_args(_func=None, lengths: str = None, *, ignore_defaults: bool = Fa
                     )
 
             # Call-time checks: numeric ranges & lengths
-            for pname, ranges in spec_map.items():
+            seen: set[tuple] = set()
+            for spec_name, ranges in reversed(spec_list):
+                parts = _split_path(spec_name)
+                pname = parts[0]
                 if pname not in bound.arguments:
                     continue
-                val = bound.arguments[pname]
-                if isinstance(val, (int, float)):
-                    if not any(lo <= val <= hi for lo, hi in ranges):
-                        _emit_warning(
-                            f"Param '{pname}'={val} not in ranges {ranges} (defined at {def_filename}:{def_lineno})",
-                            call_filename,
-                            call_lineno,
-                        )
-                else:
-                    try:
-                        length = len(val)
-                    except Exception:
-                        _emit_warning(
-                            f"Cannot determine length of '{pname}' for spec {ranges} (defined at {def_filename}:{def_lineno})",
-                            call_filename,
-                            call_lineno,
-                        )
+                items = list(_iter_path_values(bound.arguments[pname], parts[1:]))
+                if not items:
+                    continue
+                for path_frag, val in items:
+                    key = tuple([pname] + path_frag)
+                    if key in seen:
                         continue
-                    if not any(lo <= length <= hi for lo, hi in ranges):
-                        _emit_warning(
-                            f"Length of '{pname}'={length} not in ranges {ranges} (defined at {def_filename}:{def_lineno})",
-                            call_filename,
-                            call_lineno,
-                        )
+                    seen.add(key)
+                    if isinstance(val, (int, float)):
+                        if not any(lo <= val <= hi for lo, hi in ranges):
+                            _emit_warning(
+                                f"Value for '{spec_name}'={val} not in ranges {ranges} (defined at {def_filename}:{def_lineno})",
+                                call_filename,
+                                call_lineno,
+                            )
+                    else:
+                        try:
+                            length = len(val)
+                        except Exception:
+                            _emit_warning(
+                                f"Cannot determine length of '{spec_name}' for spec {ranges} (defined at {def_filename}:{def_lineno})",
+                                call_filename,
+                                call_lineno,
+                            )
+                            continue
+                        if not any(lo <= length <= hi for lo, hi in ranges):
+                            _emit_warning(
+                                f"Length of '{spec_name}'={length} not in ranges {ranges} (defined at {def_filename}:{def_lineno})",
+                                call_filename,
+                                call_lineno,
+                            )
 
             # Call-time checks: types
             for name, val in bound.arguments.items():

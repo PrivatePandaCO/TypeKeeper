@@ -1,1 +1,1 @@
-from .typekeeper import validate_args, set_arg_checks, suspend_arg_checks
+from .typekeeper import validate_args, set_arg_checks, suspended_arg_checks

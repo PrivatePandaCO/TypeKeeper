@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="typekeeper",
-    version="0.0.2",
+    version="0.0.3b1",
     description="An extensive drop-in argument validator.",
     author="Parth Mittal",
     author_email="parth@privatepanda.co",
