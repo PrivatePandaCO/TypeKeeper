@@ -1,5 +1,6 @@
 dist/
 .env/
 .venv/
-argcheck.egg-info
-test.py
+typekeeper.egg-info
+.idea/
+__pycache__/
